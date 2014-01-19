@@ -1,0 +1,73 @@
+# once initial processing is done we can read from file #
+# cd to participant folder #
+
+# RUN STEPS ONE AND TWO: #
+
+# STEP 1 # -- IMPORT DEPENDENCIES # PAGE 11 #
+
+import mne
+import os
+#import surfer
+import pylab as pl
+from scipy import io
+from mne import fiff
+from mne.viz import plot_evoked
+from mne.epochs import combine_event_ids
+from mne.fiff import Raw
+from mne.fiff import Evoked
+from mne.minimum_norm import apply_inverse, read_inverse_operator
+from mne.preprocessing.ica import ICA
+from eelbrain.lab import Dataset, Var, gui
+from eelbrain.lab import load
+
+os.environ['MNE_ROOT'] = '/Applications/MNE-<your version of MNE here>'		# make sure this line includes the exact version of MNE that you are using! #
+os.environ['SUBJECTS_DIR'] = '/<path_to_mri_folder>'
+os.environ['FREESURFER_HOME'] = '/Applications/freesurfer/'
+
+# STEP 2 # -- ENTER ANALYSIS DETAILS # PAGE 11 #
+
+participant = '<participant_code>'      # you need to make sure to change this each time you run the script #
+experiment = '<experiment_name>'        # use the same name here as in your files #
+root = '<path_to_experiment_folder>'	# the experiment folder should contain both an 'MEG' folder for your all your participant's data and an 'MRIs' folder where the scaled fsaverage or MRI for each subject will be housed.
+
+meg_root = root + '/MEG'             	# if your folders are named correctly, these three should remain untouched #   
+subjects_dir = root + '/MRIs'           
+stc_path = root + '/stc'
+
+
+# LOAD FILES.... #
+
+# read raw #
+raw = mne.fiff.Raw( participant + '_' + experiment + '-raw.fif' )
+
+# read raw with low pass filter #
+raw = mne.fiff.Raw( participant + '_' + experiment + '_lp-raw.fif' )
+
+# read events #
+events = mne.read_events( participant + '_events.fif')
+
+# read evoked #
+evoked_fname = ( participant + '_evoked-ave.fif')
+evoked = mne.fiff.read_evoked(evoked_fname, baseline = (None, 0), proj = True)
+
+
+evoked_<cond1> = mne.fiff.read_evoked( participant + '<cond1>-evoked-av.fif')
+evoked_<cond2> = mne.fiff.read_evoked( participant + '<cond2>-evoked-av.fif')
+evoked_<cond3> = mne.fiff.read_evoked( participant + '<cond3>-evoked-av.fif')
+evoked_<cond4> = mne.fiff.read_evoked( participant + '<cond4>-evoked-av.fif')
+
+
+# read cov #
+cov = mne.read_cov( participant + '_cov.fif')
+
+# read fwd solution #
+fwd = mne.read_forward_solution(participant + '_forward.fif')
+
+# read inverse operator #
+inv = mne.minimum_norm.read_inverse_operator( participant + '_inv.fif')
+
+# read source estimates # -- cd to stc folder #
+stc_<cond1> = mne.read_source_estimate( '<cond1>/<cond1> + '_' + participant + '.fif-lh.stc')
+stc_<cond2> = mne.read_source_estimate( '<cond2>/<cond2> + '_' + participant + '.fif-lh.stc')
+stc_<cond3> = mne.read_source_estimate( '<cond3>/<cond3> + '_' + participant + '.fif-lh.stc')
+stc_<cond4> = mne.read_source_estimate( '<cond4>/<cond4> + '_' + participant + '.fif-lh.stc')
