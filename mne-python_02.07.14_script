@@ -1,0 +1,420 @@
+# -*- coding: utf-8 -*-
+# MNE Script #
+ 
+
+# STEP 1 # -- IMPORT DEPENDENCIES # PAGE 22 #
+
+import mne
+import os
+import pylab as pl
+from scipy import io
+from mne import fiff
+from mne.viz import plot_evoked
+from mne.epochs import combine_event_ids
+from mne.fiff import Raw
+from mne.fiff import Evoked
+from mne.minimum_norm import apply_inverse, read_inverse_operator
+from mne.preprocessing.ica import ICA
+from eelbrain.lab import Dataset, Var, gui
+from eelbrain.lab import load
+
+os.environ['MNE_ROOT'] = '/Applications/MNE-<your version of MNE here>'		# make sure this line includes the exact version of MNE that you are using! #
+os.environ['SUBJECTS_DIR'] = '/<path_to_mri_folder>'
+os.environ['FREESURFER_HOME'] = '/Applications/freesurfer/'
+
+##################################################################################
+
+# STEP 2 # -- ENTER ANALYSIS DETAILS # PAGE 23 #
+
+participant = '<participant_code>'      # you need to make sure to change this each time you run the script #
+experiment = '<experiment_name>'        # use the same name here as in your files #
+root = '<path_to_experiment_folder>'	# the experiment folder should contain both an 'MEG' folder for your all your participant's data and an 'MRIs' folder where the scaled fsaverage or MRI for each subject will be housed.
+
+meg_root = root + '/MEG'             	# if your folders are named correctly, these three should remain untouched #   
+subjects_dir = root + '/MRIs'           
+stc_path = root + '/stc'
+
+
+##################################################################################
+
+# STEP 3 # -- CONVERT FILES TO .FIF FORMAT # PAGE 24 #
+
+mne.gui.kit2fiff()                      			# make sure you are using the Qt4 backend in 'preferences' #
+
+##################################################################################
+
+
+# STEP 4a # -- TRANSFORMATION MATRIX # PAGE 26 #
+
+mne.gui.coregistration()                			# remember that the 'subjects_dir' is the MRI folder #
+
+# STEP 4b # -- create 'ico4' source space for the participant # page 28 #
+
+mne.setup_source_space( participant , spacing = 'ico4')
+
+# errors here will be most likely related to issues defining elements of the experiment in step 2 #
+
+
+###########################################################################################################
+
+# STEP 5 # -- READ THE DATA # PAGE 30 # 
+
+raw = mne.fiff.Raw( participant + '/' + participant + '_' + experiment + '-raw.fif', preload = True)
+print raw
+raw.info
+
+
+##################################################################################
+
+
+# STEP 6 # -- VISUALISE DATA TO FIND BAD CHANNELS # PAGE 31 #
+
+raw.plot()                              			# press the down arrow to cycle through channels #
+
+
+##################################################################################
+
+
+# STEP 7 # -- DEFINE BAD CHANNELS # PAGE 32 #
+
+raw.info['bads'] += ['MEG 017']              	# this is +1 to what you'll see on the data acquisition screen #
+
+
+##################################################################################
+
+
+# STEP 8 # -- LOW PASS FILTER # PAGE 32 #
+
+raw.filter(0, 40, method = 'iir')               	# low pass filter at 40hz #
+
+raw.save( participant + '/' + participant + '_' + experiment + '_lp-raw.fif', overwrite = True)
+
+
+##################################################################################
+
+
+# STEP 9 # -- LOAD EVENTS # PAGE 32 #
+
+events = mne.find_events(raw, stim_channel = 'STI 014', min_duration = 0.002)
+
+print events                                		# check you have the expected number of events #
+
+mne.write_events( participant + '/' + participant + '_events.fif',events)
+
+
+##################################################################################
+
+
+# STEP 10 # -- DEFINE CONDITIONS # PAGE 33 # 
+
+event_id = dict(<cond1> = 1, <cond2> = 2, <cond3> = 16, <cond4> = 32)  
+                                        # state which conditions match with which triggers #
+
+event_id                                # check all of your conditions have been labelled correctly.
+           
+
+##################################################################################
+                        		
+
+# STEP 11 # -- DEFINE EPOCHS # PAGE 34 #
+
+tmin = -0.1         								# pre stimulis interval (in seconds) #
+tmax = 1.2          								# post stimulus interval #
+
+picks = mne.fiff.pick_types(raw.info, meg= True, stim = False, exclude = 'bads')    # channels to use in epochs #
+baseline = (None, 0)                                                                # what to use as baseline comparison - here it's pre-stim interval #
+epochs = mne.Epochs(raw, events, event_id,tmin, tmax, proj = True, picks = picks, baseline=baseline, preload = True)
+
+print epochs
+
+epochs.save( participant + '/' + participant + '_epoch-av.fif')
+
+
+##################################################################################
+
+
+# STEP 12 #  --  REJECT BLINKS FROM EPOCHS # PAGE 35 #
+
+# set up the blink GUI #
+
+ds = Dataset()
+ds['epochs'] = epochs
+ds['trigger'] = Var(np.ones(ds.n_cases))
+g = gui.SelectEpochs(ds, data='epochs', path = root + '/' + experiment + '/' + participant + '/' + participant + '_rejected.txt', mark = ['MEG 087', 'MEG 130']) # path to save rejections #
+
+
+# save the result to file #
+
+blink = load.tsv( participant + '/' + participant + '_rejected.txt')
+idx = blink['accept'].x
+epochs = epochs[idx]		# save epochs without the rejections #
+
+epochs                          # make a note of how many per condition were rejected #
+
+
+##################################################################################
+
+
+# STEP 13 # -- DEFINE THE EPOCHS FOR EACH CONDITION ## PAGE 38 #
+
+
+# STEP 13A # -- COMBINE CONDITIONS # PAGE 38 #
+
+#### -------#### -------#### -------
+
+# ((OPTIONAL)) #
+# ((IF MANY TRIGGERS = ONE CONDITION))  #
+# IF NOT RELEVANT, SKIP TO STEP 13B #
+# combine conditions
+
+combine_event_ids(epochs, ['cond1a', 'cond1b', 'cond1c'], {'cond1': 10}, copy = False)
+combine_event_ids(epochs, ['cond2a', 'cond2b', 'cond2c'], {'cond2': 20}, copy = False)
+combine_event_ids(epochs, ['cond3a', 'cond3b', 'cond3c'], {'cond3': 30}, copy = False)
+combine_event_ids(epochs, ['cond4a', 'cond4b', 'cond4c'], {'cond4': 40}, copy = False)
+
+#### -------#### -------#### -------
+												# this is for if you have a number of triggers which correspond to a single condition #
+												# if this is not the case, please skip this step #
+# STEP 13B # -- MAKE EPOCHS PER CONDITION # PAGE 39 #
+
+epochs['<cond1>'].get_data()
+epochs_<cond1> = epochs['<cond1>']
+epochs['<cond2>'].get_data()
+epochs_<cond2> = epochs['<cond2>']
+epochs['<cond3>'].get_data()
+epochs_<cond3> = epochs['<cond3>']
+epochs['<cond4>'].get_data()
+epochs_<cond4> = epochs['<cond4>']
+
+
+##################################################################################
+
+
+# STEP 14 # -- READ EPOCHS AND MAKE EVOKED # PAGE 39 #
+
+
+evoked = epochs.average()
+evoked.save( participant + '/' + participant + '-evoked-av.fif')
+
+
+
+# STEP 14b # -- EVOKED RESPONSE FOR EACH CONDITION # PAGE 39 #
+
+
+evoked_<cond1> = epochs_<cond1>['<cond1>'].average()
+evoked_<cond1>.save( participant + '/' + participant + '<cond1>-evoked-av.fif')
+
+evoked_<cond2> = epochs_<cond2>['<cond2>'].average()
+evoked_<cond2>.save( participant + '/' + participant + '<cond2>-evoked-av.fif')
+
+evoked_<cond3> = epochs_<cond3>['<cond3>'].average()
+evoked_<cond3>.save( participant + '/' + participant + '<cond3>-evoked-av.fif')
+
+evoked_<cond4> = epochs_<cond4>['<cond4>'].average()
+evoked_<cond4>.save( participant + '/' + participant + '<cond4>-evoked-av.fif')
+
+
+##################################################################################
+
+
+# STEP 15 # -- COVARIANCE MATRIX # PAGE 40 #
+
+cov = mne.cov.compute_covariance(epochs, 0)
+cov = mne.cov.regularize(cov, evoked.info, mag=0.05, grad = 0.05, proj = True, exclude = 'bads')
+
+mne.write_cov( participant + '/' + participant + '_cov.fif', cov)
+
+
+##################################################################################
+
+
+# STEP 16 # -- FORWARD SOLUTION # PAGE 41 #
+
+info = participant + '/' + participant + '-evoked-av.fif'
+mri = participant + '/' + participant + '-trans.fif'
+src = subjects_dir + '/' + participant + '/bem/' + participant + '-ico-4-src.fif'
+bem = subjects_dir + '/' + participant + '/bem/' + participant + '-inner_skull-bem-sol.fif'
+fname = participant + '/' + participant + '_forward.fif'
+
+fwd = mne.make_forward_solution(info = info, mri = mri, src = src, bem = bem, fname = fname, meg = True, eeg = False, overwrite = True)
+
+# here, information from the coregistration is used to compute the forward solution #
+															
+##################################################################################
+
+
+# STEP 17 # -- INVSERSE OPERATOR # PAGE 42 #
+
+inv = mne.minimum_norm.make_inverse_operator(evoked.info, fwd, cov, loose = None, depth = None, fixed = False)
+													# this is for a free orientation. If you want to change to fixed, include a depth parameter and say 'True' to fixed' #
+mne.minimum_norm.write_inverse_operator( participant + '/' + participant + '_inv.fif', inv)
+
+
+##################################################################################
+
+
+# STEP 16 # -- APPLY INVERSE TO GET SOURCE TIME ESTIMATES # PAGE 43 #
+
+snr = 2.0                     						# signal to noise ratio #
+lambda2 = 1.0 / snr ** 2.0
+method = 'dSPM'              						# how do you want to apply the inverse solution? #
+pick_ori = None
+
+# apply inverse operator for each condition:
+
+stc_<cond1> = mne.minimum_norm.apply_inverse(evoked_<cond1>, inv, method = method, lambda2 = lambda2, pick_ori = pick_ori)
+stc_<cond2> = mne.minimum_norm.apply_inverse(evoked_<cond2>, inv, method = method, lambda2 = lambda2, pick_ori = pick_ori)
+stc_<cond3> = mne.minimum_norm.apply_inverse(evoked_<cond3>, inv, method = method, lambda2 = lambda2, pick_ori = pick_ori)
+stc_<cond4> = mne.minimum_norm.apply_inverse(evoked_<cond4>, inv, method = method, lambda2 = lambda2, pick_ori = pick_ori)
+
+
+# and save them
+
+stc_<cond1>.save( stc_path + '/cond1' + '/<cond1>_' + participant + '.fif')
+stc_<cond2>.save( stc_path + '/cond2' + '/<cond2>_' + participant + '.fif')
+stc_<cond3>.save( stc_path + '/cond3' + '/<cond3>_' + participant + '.fif')
+stc_<cond4>.save( stc_path + '/cond4' + '/<cond4>_' + participant + '.fif')
+
+
+
+
+##################################################################################
+#		l o a d    s a v e d    f i l e s    f r o m    d i s k    PAGE 45       #
+##################################################################################
+
+# CHANGE DIRECTORY TO SUBJECT'S FOLDER OR THIS WILL NOT WORK!! #
+
+
+# read raw #
+raw = mne.fiff.Raw( participant + '_' + experiment + '-raw.fif' )
+
+# read raw with low pass filter #
+raw = mne.fiff.Raw( participant + '_' + experiment + '_lp-raw.fif' )
+
+# read events #
+events = mne.read_events( participant + '_events.fif')
+
+# read evoked average #
+evoked_fname = ( participant + '_evoked-ave.fif')
+evoked = mne.fiff.read_evoked(evoked_fname, baseline = (None, 0), proj = True)
+
+# read evoked conditions #
+evoked_<cond1> = mne.fiff.read_evoked( participant + '<cond1>-evoked-av.fif')
+evoked_<cond2> = mne.fiff.read_evoked( participant + '<cond2>-evoked-av.fif')
+evoked_<cond3> = mne.fiff.read_evoked( participant + '<cond3>-evoked-av.fif')
+evoked_<cond4> = mne.fiff.read_evoked( participant + '<cond4>-evoked-av.fif')
+
+# read noise covariance #
+cov = mne.read_cov( participant + '_cov.fif')
+
+# read forward solution #
+fwd = mne.read_forward_solution(participant + '_forward.fif')
+
+# read inverse operator #
+inv = mne.minimum_norm.read_inverse_operator( participant + '_inv.fif')
+
+# read source estimates # -- (change directory to stc folder) #
+stc_<cond1> = mne.read_source_estimate( '<cond1>/<cond1> + '_' + participant + '.fif-lh.stc')
+stc_<cond2> = mne.read_source_estimate( '<cond2>/<cond2> + '_' + participant + '.fif-lh.stc')
+stc_<cond3> = mne.read_source_estimate( '<cond3>/<cond3> + '_' + participant + '.fif-lh.stc')
+stc_<cond4> = mne.read_source_estimate( '<cond4>/<cond4> + '_' + participant + '.fif-lh.stc')
+
+
+
+##################################################################################
+#		c r e a t e    w h o l e     b r a i n s 		         #
+##################################################################################
+
+
+from operator import add
+from scipy import io
+
+import os
+import pylab as pl
+import numpy as np
+import mne
+
+
+os.environ['MNE_ROOT'] = '/Applications/MNE-2.7.0-3106-MacOSX-i386'		# make sure this line includes the exact version of MNE that you are using! #
+os.environ['SUBJECTS_DIR'] = '/Volumes/Public/DataAnalysis/Laura/cog_rev/mne-python/MRIs'
+os.environ['FREESURFER_HOME'] = '/Applications/freesurfer/'
+
+data_dir = '/Volumes/Public/DataAnalysis/Laura/cog_rev/mne-python/stc'
+subjects_dir = '/Volumes/Public/DataAnalysis/Laura/cog_rev/mne-python/MRIs'
+
+
+
+
+# single subject
+
+condition = 'composition'
+
+stc_fname = os.path.join(data_dir, condition, 'composition_A0003.fif-lh.stc')
+stc = mne.read_source_estimate(stc_fname, 'fsaverage')
+
+brain = stc.plot(surface='inflated', hemi='split', subjects_dir=subjects_dir, views=['lat', 'med'])
+
+# change the time displayed
+
+brain.set_time(140)
+
+# adjust the colormap
+
+brain.scale_data_colormap(fmin=2, fmid=4, fmax=7, transparent=1)
+
+
+
+
+
+# average
+
+subjects = [3, 5, 7, 8, 48, 54, 56, 62, 64, 68, 74, 75, 76, 78]
+
+stc_avgs = {}
+
+
+
+
+condition = 'only_colour'
+
+fname = os.path.join(data_dir, condition, condition + "_A%04i.fif-rh.stc")
+
+stcs = [mne.read_source_estimate(fname % subject) for subject in subjects]
+
+stc_avg = reduce(add, stcs)
+
+stc_avg /= len(stcs)
+
+stc_avg.subject = 'fsaverage'
+
+stc_avgs[condition] = stc_avg
+
+
+
+
+
+# ...
+
+stc_diff = stc_avgs['composition'] - stc_avgs['only_colour']
+
+stc_grand_av = stc_avgs['composition'] + stc_avgs['only_colour']
+
+
+
+# plot it
+
+brain = stc_grand_av.plot(surface='inflated', hemi='split', subjects_dir=subjects_dir, views=['lat', 'med'])
+
+brain.scale_data_colormap(fmin=5, fmid=8, fmax=12, transparent=1)
+
+brain.set_time(500)
+
+
+brain = stc_diff.plot(surface='inflated', hemi='both', subjects_dir=subjects_dir, views=['lat', 'med'])
+
+brain.scale_data_colormap(fmin=0.1, fmid=0.5, fmax=1, transparent=1)
+
+brain.save_movie('/Users/christian/Desktop/test stc', tstart=500, tstop=600, step=10)
+
+
+
